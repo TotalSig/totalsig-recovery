@@ -101,6 +101,11 @@ pkg . --targets node14-linux-x64,node14-macos-x64,node14-win-x64
 - `shamir.js`: Contains the ShamirSecretSharing class for handling secret sharing.
 - `package.json`: Contains project metadata and dependencies.
 
+## Private Key Export Limitations
+
+Note about Solana:
+Due to the structure of private keys in ed25519-based blockchains, while the actual private key can be recovered, it is exported in a format that is largely unsupported by other wallet providers. You can still sign transactions using this private key, which will be validated by the corresponding network. However, at the moment, this requires writing a custom script for compiling and signing such transactions. We are working to resolve this limitation in the near future.
+
 ## Troubleshooting
 
 - Ensure all dependencies are installed correctly if using the Node.js script.
