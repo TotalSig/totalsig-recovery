@@ -102,7 +102,7 @@ fs.readdir(directoryPath, (err, files) => {
 
             console.log(`[INFO] Decrypted ${walletsBackupData.length} wallet entries from backup`);
             
-            walletsBackupData.forEach(walletBackupData => {
+            walletsBackupData.forEach((walletBackupData, index) => {
                 try {
                     const { blockchain, calculatedAddress, calculatedPubKey, minimumSigAmount, partiesAmount, partyId, path } = walletBackupData
 
