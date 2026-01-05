@@ -93,15 +93,21 @@ fs.readdir(directoryPath, (err, files) => {
 
         // Check if corresponding backup file exists and read its content
         if (fs.existsSync(backupFilePath)) {
+            console.log(`[INFO] Found backup file for account: "${accountName}"`);
+            
             const encryptedBackup = fs.readFileSync(backupFilePath, 'utf8');
             const encryptedBackupSerialized = cryptoJs.enc.Base64.parse(encryptedBackup).toString(cryptoJs.enc.Utf8)
             const walletsBackupDataJSON = cryptoJs.AES.decrypt(encryptedBackupSerialized, accountPrivKey).toString(cryptoJs.enc.Utf8)
             const walletsBackupData = JSON.parse(walletsBackupDataJSON)
 
+            console.log(`[INFO] Decrypted ${walletsBackupData.length} wallet entries from backup`);
+            
             walletsBackupData.forEach(walletBackupData => {
                 try {
                     const { blockchain, calculatedAddress, calculatedPubKey, minimumSigAmount, partiesAmount, partyId, path } = walletBackupData
 
+                    console.log(`[INFO] Processing wallet ${index + 1}/${walletsBackupData.length}: ${blockchain} - ${calculatedAddress.substring(0, 10)}...`);
+                    
                     if (!allWallets[blockchain]) {
                         allWallets[blockchain] = {}
                     }
@@ -113,6 +119,7 @@ fs.readdir(directoryPath, (err, files) => {
                             partiesAmount,
                             participants: []
                         }
+                        console.log(`[INFO] New wallet discovered: ${blockchain} - ${calculatedAddress} (requires ${minimumSigAmount}/${partiesAmount} signatures)`);
                     }
     
                     const key = hdWallet.derive(walletBackupData.path)   
@@ -148,6 +155,7 @@ fs.readdir(directoryPath, (err, files) => {
                         allWallets[blockchain][calculatedAddress].participants.push({
                             partyId, path, pubKey: accountPubKey, accountName, x_i: (secretsSerialized.x_i || secretsSerialized.s_i)
                         })
+                        console.log(`[INFO] Added participant (partyId: ${partyId}) to wallet ${calculatedAddress.substring(0, 10)}... from account "${accountName}"`);
                     } else {
                         throw Error(secretsSerialized)
                     }
@@ -158,11 +166,19 @@ fs.readdir(directoryPath, (err, files) => {
         }
     });
 
+    console.log('[INFO] === Attempting Key Recovery ===');
+
     Object.keys(allWallets).forEach(blockchain => {
         Object.keys(allWallets[blockchain]).forEach(calculatedAddress => {
             const walletToRecover = allWallets[blockchain][calculatedAddress]
             participantsCount = walletToRecover.participants.length
+
+            console.log(`[INFO] Wallet: ${blockchain} - ${calculatedAddress}`);
+            console.log(`[INFO] Participants available: ${participantsCount}/${walletToRecover.partiesAmount}, minimum required: ${walletToRecover.minimumSigAmount}`);
+            
             if (walletToRecover.minimumSigAmount <= participantsCount) {
+                console.log(`[INFO] Sufficient shares available - attempting recovery...`);
+                
                 if (!walletsToRecover[blockchain]) {
                     walletsToRecover[blockchain] = {}
                 }
@@ -206,11 +222,16 @@ fs.readdir(directoryPath, (err, files) => {
                     publicKey = publicKeyPoint.toHex();
                 }
 
+                console.log(`[INFO] Reconstructed public key: ${publicKey.substring(0, 16)}...`);
+                console.log(`[INFO] Expected public key:      ${allWallets[blockchain][calculatedAddress].calculatedPubKey.substring(0, 16)}...`);
+
+
                 if (publicKey === allWallets[blockchain][calculatedAddress].calculatedPubKey) {
                     fs.appendFileSync(FILE_NAME, `${blockchain} address ${calculatedAddress} has private key - 0x${privateKeyHex}` + '\n');
+                    console.log(`[SUCCESS] ✓ Recovered private key for ${blockchain} - ${calculatedAddress}`);
                 } else {
                     // Something terribly wrong has happened
-                    console.log(`!!! Failed to recover ${blockchain} address ${calculatedAddress}`)
+                    console.log(`[ERROR] ✗ Public key mismatch! Failed to recover ${blockchain} address ${calculatedAddress}`);
                 }
             }
         })
