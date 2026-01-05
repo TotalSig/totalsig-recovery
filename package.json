@@ -13,12 +13,15 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@noble/ed25519": "1.7.3",
+    "@noble/ed25519": "^1.7.3",
     "bip39": "3.1.0",
+    "bs58": "^5.0.0",
+    "crypto": "^1.0.1",
     "crypto-js": "4.2.0",
     "deasync": "0.1.30",
     "elliptic": "6.5.5",
     "hdkey": "2.1.0",
-    "secp256k1": "5.0.0"
+    "secp256k1": "5.0.0",
+    "tweetnacl": "^1.0.3"
   }
 }

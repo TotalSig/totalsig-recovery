@@ -4,30 +4,12 @@ const bip39 = require('bip39');
 const HDKey = require('hdkey');
 const cryptoJs = require('crypto-js');
 const elliptic = require('elliptic');
+const ed25519 = require('@noble/ed25519');
 const ShamirSecretSharing = require('./shamir');
-const ed25519 = require('@noble/ed25519')
-
-const blockchainCurves = {
-    "Bitcoin": 'secp256k1',
-    "Ethereum": 'secp256k1',
-    "Tron": 'secp256k1',
-    "Solana": 'ed25519',
-    "Litecoin": 'secp256k1',
-    "Dogecoin": 'secp256k1',
-    "BitcoinCash": 'secp256k1',
-    "BinanceSmartChain": 'secp256k1',
-    "Polygon": 'secp256k1',
-    "Avalanche": 'secp256k1',
-    "ArbitrumOne": 'secp256k1',
-    "Optimism": 'secp256k1',
-    "Taiko": 'secp256k1',
-    "BitcoinTestnet": 'secp256k1',
-    "EthereumRopsten": 'secp256k1',
-    "EthereumGoerli": 'secp256k1',
-    "TronShasta": 'secp256k1',
-    "SolanaTestnet": 'ed25519',
-    "TaikoHekla": 'secp256k1',
-}
+const blockchains = require('./blockchains');
+const bs58 = require('bs58');
+const nacl = require('tweetnacl');
+const crypto = require('crypto');
 
 const directoryPath = process.cwd();
 
@@ -58,6 +40,7 @@ fs.readdir(directoryPath, (err, files) => {
     // Array to store private key of each matched file
     const accountsData = [];
     const allWallets = {};
+    const skippedWallets = {};
     const walletsToRecover = {};
 
     // Output the matched account names and their trimmed content
@@ -102,6 +85,12 @@ fs.readdir(directoryPath, (err, files) => {
                 try {
                     const { blockchain, calculatedAddress, calculatedPubKey, minimumSigAmount, partiesAmount, partyId, path } = walletBackupData
 
+                    if (blockchains.isUnsupportedNetwork(blockchain)) {
+                        if (!skippedWallets[calculatedAddress]) skippedWallets[calculatedAddress] = {}
+                        skippedWallets[calculatedAddress][blockchain] = 1
+                        return
+                    }
+
                     if (!allWallets[blockchain]) {
                         allWallets[blockchain] = {}
                     }
@@ -116,7 +105,7 @@ fs.readdir(directoryPath, (err, files) => {
                     }
     
                     const key = hdWallet.derive(walletBackupData.path)   
-                    const blockchainCurve = blockchainCurves[blockchain]
+                    const blockchainCurve = blockchains.blockchainCurves[blockchain]
 
                     const secretsEncryptedSerialized = cryptoJs.enc.Base64.parse(walletBackupData.secretsEncrypted).toString(
                         cryptoJs.enc.Utf8,
@@ -158,6 +147,12 @@ fs.readdir(directoryPath, (err, files) => {
         }
     });
 
+    Object.keys(skippedWallets).forEach(calculatedAddress => {
+        Object.keys(skippedWallets[calculatedAddress]).forEach(blockchain => {
+            console.log(`Wallet recovery forconst crypto = require('crypto'); ${calculatedAddress} skipped: blockchain ${blockchain} is unsupported. `)
+        })
+    })
+
     Object.keys(allWallets).forEach(blockchain => {
         Object.keys(allWallets[blockchain]).forEach(calculatedAddress => {
             const walletToRecover = allWallets[blockchain][calculatedAddress]
@@ -175,14 +170,14 @@ fs.readdir(directoryPath, (err, files) => {
                     shares.push([BigInt(partyId), BigInt('0x'+x_i)])
                 })
 
-                let keyPair, publicKey, privateKeyHex;
+                let keyPair, publicKey, privateKeyBigInt, privateKeyHex;
 
-                const blockchainCurve = blockchainCurves[blockchain]
+                const blockchainCurve = blockchains.blockchainCurves[blockchain]
                 if (blockchainCurve === 'secp256k1') {
                     const prime = BigInt(elliptic.curves.secp256k1.curve.n);
-                    const finalShare = ShamirSecretSharing.reconstructSecret(shares.slice(0, walletToRecover.minimumSigAmount), prime)
+                    privateKeyBigInt = ShamirSecretSharing.reconstructSecret(shares.slice(0, walletToRecover.minimumSigAmount), prime)
     
-                    privateKeyHex = finalShare.toString(16).padStart(64, '0');
+                    privateKeyHex = privateKeyBigInt.toString(16).padStart(64, '0');
 
                     // Create a key pair from the private key
                     const ec = new elliptic.ec('secp256k1');
@@ -195,19 +190,37 @@ fs.readdir(directoryPath, (err, files) => {
                     publicKey = publicKeyPoint.encodeCompressed('hex');
                 } else if (blockchainCurve === 'ed25519') {
                     const prime = BigInt(ed25519.CURVE.n);
-                    const finalShare = ShamirSecretSharing.reconstructSecret(shares.slice(0, walletToRecover.minimumSigAmount), prime)
+                    privateKeyBigInt = ShamirSecretSharing.reconstructSecret(shares.slice(0, walletToRecover.minimumSigAmount), prime)
     
-                    privateKeyHex = finalShare.toString(16).padStart(64, '0');
+                    privateKeyHex = privateKeyBigInt.toString(16).padStart(64, '0');
 
                     // Generate the public key from the private key
-                    let publicKeyPoint = ed25519.Point.BASE.multiply(finalShare);
+                    let publicKeyPoint = ed25519.Point.BASE.multiply(privateKeyBigInt);
 
                     // Convert the public key to a hex string
                     publicKey = publicKeyPoint.toHex();
                 }
 
                 if (publicKey === allWallets[blockchain][calculatedAddress].calculatedPubKey) {
-                    fs.appendFileSync(FILE_NAME, `${blockchain} address ${calculatedAddress} has private key - 0x${privateKeyHex}` + '\n');
+                    if (blockchains.ofBitcoinFamily(blockchain)) {
+                        fs.appendFileSync(FILE_NAME, `${blockchain} address ${calculatedAddress} has private key - ${privateKeyHex}` + '\n');
+                    } else if (blockchains.ofEthereumFamily(blockchain)) {
+                        fs.appendFileSync(FILE_NAME, `${blockchain} address ${calculatedAddress} has private key - 0x${privateKeyHex}` + '\n');
+                    } else if (blockchains.ofTronFamily(blockchain)) {
+                        fs.appendFileSync(FILE_NAME, `${blockchain} address ${calculatedAddress} has private key - ${privateKeyHex}` + '\n');
+                    } else if (blockchains.ofSolanaFamily(blockchain)) {
+                        const privateKeyArray = blockchains.bigIntToUint8Array(privateKeyBigInt);
+                        const publicKeyArray = blockchains.bigIntToUint8Array(BigInt('0x'+publicKey));
+                        const combinedKeyArray = new Uint8Array(64);
+                        combinedKeyArray.set(privateKeyArray);
+                        combinedKeyArray.set(publicKeyArray, 32);
+
+                        // console.log("publicKey", publicKey)
+                        
+                        fs.appendFileSync(FILE_NAME, `${blockchain} address ${calculatedAddress} has private key - ${blockchains.uint8ArrayToHex(combinedKeyArray)}` + '\n');
+                    } else {
+                        fs.appendFileSync(FILE_NAME, `${blockchain} address ${calculatedAddress} has private key - ${privateKeyHex}` + '\n');   
+                    }
                 } else {
                     // Something terribly wrong has happened
                     console.log(`!!! Failed to recover ${blockchain} address ${calculatedAddress}`)
@@ -215,6 +228,53 @@ fs.readdir(directoryPath, (err, files) => {
             }
         })
     })
+
+    // Step 1: Convert hex seed to Uint8Array
+    const seed = blockchains.hexToUint8Array('adbcc90954473bf849611466dce2573a5d639655158066fa7dd68960221e89c5');
+
+    // Step 2: Hash the seed using SHA-512
+    const hash = crypto.createHash('sha512').update(seed).digest();
+
+    // Step 3: Clamp the hash
+    const privateKey = new Uint8Array(hash.slice(0, 32));
+    privateKey[0] &= 248;
+    privateKey[31] &= 127;
+    privateKey[31] |= 64;
+
+        // Step 4: Generate the key pair from the private key
+        const keyPair = nacl.sign.keyPair.fromSeed(privateKey);
+
+        // Step 5: Extract the secret key (64 bytes) - private key + public key
+        const secretKey = new Uint8Array(64);
+        secretKey.set(privateKey, 0);
+        secretKey.set(keyPair.publicKey, 32);
+
+        // Step 6: Generate the key pair from the secret key
+        const derivedKeyPair = nacl.sign.keyPair.fromSecretKey(secretKey);
+        console.log('Public Key:', blockchains.uint8ArrayToHex(derivedKeyPair.publicKey));
+
+    privateKey.reverse()
+
+    // Convert the clamped private key to a big integer
+    const privateKeyBigInt = BigInt(`0x${blockchains.uint8ArrayToHex(privateKey)}`);
+
+    // Define the order of the Ed25519 curve (L)
+    const prime = BigInt(ed25519.CURVE.n); // 0x1000000000000000000000000000000014DEF9DEA2F79CD65812631A5CF5D3ED
+
+    // Ensure the scalar is reduced modulo the curve order
+    const reducedPrivateKeyBigInt = privateKeyBigInt % prime;
+
+    // Step 4: Scalar multiplication with the base point
+    const publicKeyPoint = ed25519.Point.BASE.multiply(reducedPrivateKeyBigInt);
+    const publicKey = publicKeyPoint.toRawBytes();
+
+    console.log('publicKey:', blockchains.uint8ArrayToHex(publicKey));
+
+    // Step 5: Encode the public key as a Solana address using base58
+    const solanaAddress = bs58.encode(publicKey);
+
+    console.log('Solana Address:', solanaAddress);
+
 
     console.log(`Done!`)
 });
